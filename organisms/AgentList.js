@@ -1,55 +1,73 @@
 "use client";
-import { useState, useEffect, useContext } from "react";
+import { useState, useEffect, useContext, useMemo, useCallback } from "react";
 import { fetchAgents } from "@/services/api";
 import GlobalContext from "@/context/GlobalContext";
+import { websocketService } from "@/services/websocket";
 import AgentCard from "@/molecules/AgentCard";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 
 export default function AgentList() {
-  const { agents = [] } = useContext(GlobalContext); // Proporcionamos un valor por defecto
-  const [filteredAgents, setFilteredAgents] = useState([]);
+  const { agents = [] } = useContext(GlobalContext);
+  const [localAgents, setLocalAgents] = useState([]);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
 
-  // Cargar agentes iniciales
-  useEffect(() => {
-    const loadAgents = async () => {
-      try {
-        setLoading(true);
-        const data = await fetchAgents(status ? { status } : {});
-        setFilteredAgents(data);
-        setError(null);
-      } catch (err) {
-        console.error("Error cargando agentes:", err);
-        setError(err.message);
-        setFilteredAgents([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadAgents();
+  const loadAgents = useCallback(async () => {
+    try {
+      setLoading(true);
+      const data = await fetchAgents(status ? { status } : {});
+      setLocalAgents(data);
+      setError(null);
+    } catch (err) {
+      console.error("Error cargando agentes:", err);
+      setError(err.message);
+      setLocalAgents([]);
+    } finally {
+      setLoading(false);
+    }
   }, [status]);
 
-  // Filtrar agentes
   useEffect(() => {
-    if (!Array.isArray(agents)) {
-      console.warn("agents no es un array:", agents);
-      return;
+    loadAgents();
+
+    // Suscribirse a múltiples eventos de WebSocket
+    const unsubscribeNew = websocketService.subscribe("NEW_AGENT", () => {
+      loadAgents();
+    });
+
+    const unsubscribeUpdate = websocketService.subscribe("UPDATE_AGENT", () => {
+      loadAgents();
+    });
+
+    const unsubscribeDelete = websocketService.subscribe("DELETE_AGENT", () => {
+      loadAgents();
+    });
+
+    return () => {
+      unsubscribeNew();
+      unsubscribeUpdate();
+      unsubscribeDelete();
+    };
+  }, [loadAgents]);
+
+  // Filtrar agentes usando useMemo
+  const filteredAgents = useMemo(() => {
+    if (!Array.isArray(localAgents)) {
+      console.warn("agents no es un array:", localAgents);
+      return [];
     }
 
-    const filtered = agents.filter((agent) => {
+    return localAgents.filter((agent) => {
       const nameMatch = agent.name
         .toLowerCase()
         .includes(searchTerm.toLowerCase());
       const statusMatch = status ? agent.status === status : true;
       return nameMatch && statusMatch;
     });
-
-    setFilteredAgents(filtered);
-  }, [searchTerm, agents, status]);
+  }, [localAgents, searchTerm, status]);
 
   return (
     <div className="space-y-6">
